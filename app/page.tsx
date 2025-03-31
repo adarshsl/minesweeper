@@ -9,11 +9,11 @@ import Cookies from 'js-cookie'
 
 import { Button } from "@/components/ui/button"
 
-interface CellType {
-  isMine: boolean
+interface Cell {
+  hasMine: boolean
   isRevealed: boolean
   isFlagged: boolean
-  adjacentMines: number
+  neighborMines: number
 }
 
 export default function Minesweeper() {
@@ -24,468 +24,339 @@ export default function Minesweeper() {
   const [time, setTime] = useState(0)
   const [timerInterval, setTimerInterval] = useState<NodeJS.Timeout | null>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
+  const [board, setBoard] = useState<Cell[][]>([])
+  const [userName, setUserName] = useState("")
+  const [showWelcome, setShowWelcome] = useState(true)
+
+  // Load user data on mount
+  useEffect(() => {
+    const userCookie = Cookies.get('user')
+    if (userCookie) {
+      try {
+        const userData = JSON.parse(userCookie)
+        setUserName(userData.name)
+      } catch (e) {
+        console.error('Error parsing user data:', e)
+      }
+    }
+
+    // Hide welcome message after 3 seconds
+    const timer = setTimeout(() => {
+      setShowWelcome(false)
+    }, 3000)
+
+    return () => clearTimeout(timer)
+  }, [])
 
   // Game configuration based on difficulty
   const config = {
-    easy: { rows: 9, cols: 9, mines: 10 },
-    medium: { rows: 12, cols: 12, mines: 30 },
-    hard: { rows: 16, cols: 16, mines: 60 },
+    easy: { rows: 8, cols: 8, mines: 10 },
+    medium: { rows: 16, cols: 16, mines: 40 },
+    hard: { rows: 16, cols: 30, mines: 99 }
   }
 
-  const { rows, cols, mines } = config[difficulty]
-
-  // Initialize board
-  const [board, setBoard] = useState<CellType[][]>([])
-
-  const [minesLeft, setMinesLeft] = useState(mines)
-
-  // Initialize or reset the game
-  const initializeGame = () => {
-    const newBoard = Array(rows)
-      .fill(null)
-      .map(() =>
-        Array(cols)
-          .fill(null)
-          .map(() => ({
-            isMine: false,
-            isRevealed: false,
-            isFlagged: false,
-            adjacentMines: 0,
-          })),
-      )
-
-    setBoard(newBoard)
-    setGameState("playing")
-    setFirstClick(true)
-    setMinesLeft(mines)
-
-    // Reset timer
-    if (timerInterval) {
-      clearInterval(timerInterval)
-      setTimerInterval(null)
-    }
-    setTime(0)
-  }
-
-  // Place mines after first click
-  const placeMines = (clickedRow: number, clickedCol: number) => {
-    const newBoard = [...board]
-
-    // Create a list of all possible positions excluding the clicked cell and its neighbors
-    const positions = []
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        // Skip the clicked cell and its neighbors
-        if (Math.abs(r - clickedRow) <= 1 && Math.abs(c - clickedCol) <= 1) {
-          continue
-        }
-        positions.push({ r, c })
-      }
-    }
-
-    // Shuffle the positions
-    for (let i = positions.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[positions[i], positions[j]] = [positions[j], positions[i]]
-    }
-
-    // Place mines
-    const mineCount = Math.min(mines, positions.length)
-    for (let i = 0; i < mineCount; i++) {
-      const { r, c } = positions[i]
-      newBoard[r][c].isMine = true
-    }
-
-    // If we couldn't place all mines due to board size constraints
-    if (mineCount < mines) {
-      setMinesLeft(mineCount)
-    }
-
-    // Calculate adjacent mines
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (!newBoard[r][c].isMine) {
-          let count = 0
-          // Check all 8 adjacent cells
-          for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-              if (dr === 0 && dc === 0) continue
-
-              const newR = r + dr
-              const newC = c + dc
-
-              if (newR >= 0 && newR < rows && newC >= 0 && newC < cols && newBoard[newR][newC].isMine) {
-                count++
-              }
-            }
-          }
-          newBoard[r][c].adjacentMines = count
-        }
-      }
-    }
-
-    setBoard(newBoard)
-  }
-
-  // Start timer on first click
-  const startTimer = () => {
-    if (timerInterval) return
-
-    const interval = setInterval(() => {
-      setTime((prevTime) => prevTime + 1)
-    }, 1000)
-
-    setTimerInterval(interval)
-  }
-
-  // Handle cell click
-  const handleCellClick = (row: number, col: number) => {
-    if (gameState !== "playing" || board[row][col].isFlagged) return
-
-    // Start timer on first click
-    if (firstClick) {
-      startTimer()
-      placeMines(row, col)
-      setFirstClick(false)
-    }
-
-    const newBoard = [...board]
-
-    // Game over if mine is clicked
-    if (newBoard[row][col].isMine) {
-      // Reveal all mines
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (newBoard[r][c].isMine) {
-            newBoard[r][c].isRevealed = true
-          }
-        }
-      }
-
-      setBoard(newBoard)
-      setGameState("lost")
-
-      if (timerInterval) {
-        clearInterval(timerInterval)
-        setTimerInterval(null)
-      }
-
-      return
-    }
-
-    // Reveal the cell
-    revealCell(newBoard, row, col)
-
-    // Check if player has won
-    checkWinCondition(newBoard)
-
-    setBoard(newBoard)
-  }
-  // Recursively reveal cells with a queue-based approach to prevent stack overflow
-  const revealCell = (board: CellType[][], row: number, col: number) => {
-    const queue = [{ row, col }]
-    const visited = new Set<string>()
-
-    while (queue.length > 0) {
-      const { row: r, col: c } = queue.shift()!
-      const key = `${r},${c}`
-
-      if (
-        r < 0 || r >= rows || // Out of bounds check
-        c < 0 || c >= cols || // Out of bounds check
-        visited.has(key) || // Already visited
-        board[r][c].isFlagged || // Skip flagged cells
-        board[r][c].isMine || // Skip mines
-        board[r][c].isRevealed // Skip already revealed cells
-      ) {
-        continue
-      }
-
-      visited.add(key)
-      board[r][c].isRevealed = true
-
-      // If cell has no adjacent mines, add all adjacent cells to queue
-      if (board[r][c].adjacentMines === 0) {
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            if (dr === 0 && dc === 0) continue // Skip the current cell
-            const newRow = r + dr
-            const newCol = c + dc
-            queue.push({ row: newRow, col: newCol })
-          }
-        }
-      }
-    }
-  }
-
-  // Handle right click (flag)
-  const handleRightClick = (e: React.MouseEvent, row: number, col: number) => {
-    e.preventDefault()
-
-    if (gameState !== "playing" || board[row][col].isRevealed) return
-
-    const newBoard = [...board]
-
-    // Toggle flag
-    newBoard[row][col].isFlagged = !newBoard[row][col].isFlagged
-
-    // Update mines left counter
-    setMinesLeft((prevMinesLeft) => (newBoard[row][col].isFlagged ? prevMinesLeft - 1 : prevMinesLeft + 1))
-
-    setBoard(newBoard)
-  }
-
-  // Handle long press for mobile (flag)
-  const handleLongPress = (row: number, col: number) => {
-    if (gameState !== "playing" || board[row][col].isRevealed) return
-
-    const newBoard = [...board]
-
-    // Toggle flag
-    newBoard[row][col].isFlagged = !newBoard[row][col].isFlagged
-
-    // Update mines left counter
-    setMinesLeft((prevMinesLeft) => (newBoard[row][col].isFlagged ? prevMinesLeft - 1 : prevMinesLeft + 1))
-
-    setBoard(newBoard)
-  }
-
-  // Check if player has won
-  const checkWinCondition = (board: CellType[][]) => {
-    let unrevealed = 0
-    let correctFlags = 0
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        // Count unrevealed non-mine cells
-        if (!board[r][c].isRevealed && !board[r][c].isMine) {
-          unrevealed++
-        }
-
-        // Count correctly flagged mines
-        if (board[r][c].isFlagged && board[r][c].isMine) {
-          correctFlags++
-        }
-      }
-    }
-
-    // Win if all non-mine cells are revealed OR all mines are correctly flagged
-    if (unrevealed === 0 || correctFlags === mines) {
-      setGameState("won")
-
-      // Reveal all unflagged mines with checkmarks
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (board[r][c].isMine && !board[r][c].isFlagged) {
-            board[r][c].isRevealed = true
-          }
-        }
-      }
-
-      if (timerInterval) {
-        clearInterval(timerInterval)
-        setTimerInterval(null)
-      }
-    }
-  }
-
-  // Initialize game on mount and when difficulty changes
-  useEffect(() => {
-    initializeGame()
-
-    return () => {
-      if (timerInterval) {
-        clearInterval(timerInterval)
-      }
-    }
-  }, [difficulty])
-
-  // Format time as MM:SS
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
-  }
-
-  // Cell component
-  const Cell = ({ cell, row, col }: { cell: CellType; row: number; col: number }) => {
-    const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null)
-
-    const handleTouchStart = () => {
-      const timer = setTimeout(() => {
-        handleLongPress(row, col)
-      }, 500) // 500ms long press
-
-      setLongPressTimer(timer)
-    }
-
-    const handleTouchEnd = () => {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer)
-        setLongPressTimer(null)
-      }
-    }
-
-    // Determine cell content and style
-    let content = null
-    let cellClass = "w-full h-full flex items-center justify-center select-none rounded-sm transition-colors"
-
-    if (cell.isRevealed) {
-      if (cell.isMine) {
-        content = gameState === "won" ? "✅" : "💣"
-        cellClass += gameState === "won" ? " bg-green-400" : " bg-red-400"
-      } else {
-        if (cell.adjacentMines > 0) {
-          content = cell.adjacentMines
-
-          // Different colors for different numbers
-          const colors = [
-            "", // No 0s are displayed
-            "text-blue-600", // 1
-            "text-green-600", // 2
-            "text-red-600", // 3
-            "text-purple-600", // 4
-            "text-yellow-600", // 5
-            "text-teal-600", // 6
-            "text-pink-600", // 7
-            "text-gray-800", // 8
-          ]
-
-          cellClass += ` ${colors[cell.adjacentMines]} font-bold`
-        }
-
-        cellClass += " bg-slate-100"
-      }
-    } else {
-      cellClass += " bg-teal-400 hover:bg-teal-500 cursor-pointer active:bg-teal-600"
-
-      if (cell.isFlagged) {
-        content = "🚩"
-      }
-    }
-
-    return (
-      <button
-        className={cellClass}
-        onClick={() => handleCellClick(row, col)}
-        onContextMenu={(e) => handleRightClick(e, row, col)}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
-        {content}
-      </button>
-    )
-  }
+  // Calculate remaining mines
+  const minesLeft = config[difficulty].mines - board.flat().filter(cell => cell.isFlagged).length
 
   const handleLogout = () => {
     Cookies.remove('user')
     router.push('/login')
   }
 
+  // Initialize board
+  useEffect(() => {
+    initializeBoard()
+  }, [difficulty])
+
+  // Timer effect
+  useEffect(() => {
+    if (gameState === "playing" && !firstClick) {
+      const interval = setInterval(() => {
+        setTime(prev => prev + 1)
+      }, 1000)
+      setTimerInterval(interval)
+      return () => clearInterval(interval)
+    }
+    return () => {}
+  }, [gameState, firstClick])
+
+  const initializeBoard = () => {
+    const { rows, cols } = config[difficulty]
+    const newBoard: Cell[][] = Array(rows).fill(null).map(() =>
+      Array(cols).fill(null).map(() => ({
+        hasMine: false,
+        isRevealed: false,
+        isFlagged: false,
+        neighborMines: 0
+      }))
+    )
+    setBoard(newBoard)
+    setGameState("playing")
+    setFirstClick(true)
+    setTime(0)
+    if (timerInterval) clearInterval(timerInterval)
+  }
+
+  const placeMines = (firstRow: number, firstCol: number) => {
+    const { rows, cols, mines } = config[difficulty]
+    const newBoard = [...board]
+    let minesPlaced = 0
+
+    while (minesPlaced < mines) {
+      const row = Math.floor(Math.random() * rows)
+      const col = Math.floor(Math.random() * cols)
+
+      // Don't place mine on first click or where a mine already exists
+      if ((row !== firstRow || col !== firstCol) && !newBoard[row][col].hasMine) {
+        newBoard[row][col].hasMine = true
+        minesPlaced++
+      }
+    }
+
+    // Calculate neighbor mines
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        if (!newBoard[row][col].hasMine) {
+          let count = 0
+          for (let i = -1; i <= 1; i++) {
+            for (let j = -1; j <= 1; j++) {
+              const newRow = row + i
+              const newCol = col + j
+              if (newRow >= 0 && newRow < rows && newCol >= 0 && newCol < cols) {
+                if (newBoard[newRow][newCol].hasMine) count++
+              }
+            }
+          }
+          newBoard[row][col].neighborMines = count
+        }
+      }
+    }
+
+    setBoard(newBoard)
+  }
+
+  const revealCell = (row: number, col: number) => {
+    if (gameState !== "playing" || board[row][col].isFlagged || board[row][col].isRevealed) return
+
+    const newBoard = [...board]
+
+    if (firstClick) {
+      setFirstClick(false)
+      placeMines(row, col)
+    }
+
+    if (newBoard[row][col].hasMine) {
+      // Game Over
+      revealAllMines()
+      setGameState("lost")
+      if (timerInterval) clearInterval(timerInterval)
+      return
+    }
+
+    // Reveal current cell
+    newBoard[row][col].isRevealed = true
+    setBoard(newBoard)
+
+    // If cell has no adjacent mines, reveal neighbors
+    if (newBoard[row][col].neighborMines === 0) {
+      const { rows, cols } = config[difficulty]
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+          const newRow = row + i
+          const newCol = col + j
+          if (
+            newRow >= 0 && newRow < rows &&
+            newCol >= 0 && newCol < cols &&
+            !newBoard[newRow][newCol].isRevealed &&
+            !newBoard[newRow][newCol].isFlagged
+          ) {
+            revealCell(newRow, newCol)
+          }
+        }
+      }
+    }
+
+    // Check for win
+    checkWin()
+  }
+
+  const toggleFlag = (row: number, col: number) => {
+    if (gameState !== "playing" || board[row][col].isRevealed) return
+
+    const newBoard = [...board]
+    newBoard[row][col].isFlagged = !newBoard[row][col].isFlagged
+    setBoard(newBoard)
+  }
+
+  const revealAllMines = () => {
+    const newBoard = board.map(row =>
+      row.map(cell => ({
+        ...cell,
+        isRevealed: cell.hasMine ? true : cell.isRevealed
+      }))
+    )
+    setBoard(newBoard)
+  }
+
+  const checkWin = () => {
+    const allNonMinesRevealed = board.every(row =>
+      row.every(cell => cell.hasMine || cell.isRevealed)
+    )
+    if (allNonMinesRevealed) {
+      setGameState("won")
+      if (timerInterval) clearInterval(timerInterval)
+    }
+  }
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }
+
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center p-4 ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-b from-sky-50 to-sky-100'}`}>
-      <div className="w-full max-w-2xl">
+    <div className={`min-h-screen flex flex-col items-center justify-start p-4 ${isDarkMode ? 'bg-slate-900' : 'bg-gradient-to-br from-blue-50 to-indigo-100'}`}>
+      {showWelcome && userName && (
+        <div className="fixed top-4 right-4 bg-indigo-600 text-white px-6 py-3 rounded-lg shadow-lg animate-fade-out z-50">
+          Hello, {userName}! 👋
+        </div>
+      )}
+      
+      <div className="w-full max-w-4xl">
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center space-x-4">
-            <div className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+            <div className={`text-lg font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
               Mines: {minesLeft}
             </div>
-            <div className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+            <div className={`text-lg font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
               Time: {formatTime(time)}
             </div>
           </div>
           <div className="flex items-center space-x-4">
             <Button
               onClick={handleLogout}
-              className="bg-red-600 hover:bg-red-700 text-white"
+              className="bg-rose-600 hover:bg-rose-700 text-white"
             >
               Logout
             </Button>
             <Button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'} text-white`}
+              className={`${isDarkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-slate-200 hover:bg-slate-300'}`}
             >
               {isDarkMode ? '☀️' : '🌙'}
             </Button>
           </div>
         </div>
-        <h1 className="text-2xl font-bold mb-4 text-teal-700">Minesweeper</h1>
 
-        {/* Game status */}
-        <div className="mb-4 text-center">
-          {gameState === "won" && <div className="text-xl font-bold text-green-600">You Win! 🎉</div>}
-          {gameState === "lost" && <div className="text-xl font-bold text-red-600">Game Over! 💥</div>}
-        </div>
+        <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} rounded-lg shadow-xl p-6`}>
+          <h1 className={`text-2xl font-bold mb-4 ${isDarkMode ? 'text-slate-200' : 'text-indigo-700'}`}>
+            Minesweeper
+          </h1>
 
-        {/* Game controls */}
-        <div className="flex justify-between items-center w-full max-w-sm mb-4">
-          <div className="flex gap-2">
+          <div className="flex gap-2 mb-4">
             <Button
-              variant="outline"
-              size="sm"
-              onClick={initializeGame}
-              className="flex items-center gap-1 bg-white shadow-sm"
+              onClick={() => setDifficulty("easy")}
+              variant={difficulty === "easy" ? "default" : "outline"}
+              className={difficulty === "easy" ? "bg-indigo-600 hover:bg-indigo-700" : ""}
             >
-              <RefreshCw size={16} />
+              Easy
+            </Button>
+            <Button
+              onClick={() => setDifficulty("medium")}
+              variant={difficulty === "medium" ? "default" : "outline"}
+              className={difficulty === "medium" ? "bg-indigo-600 hover:bg-indigo-700" : ""}
+            >
+              Medium
+            </Button>
+            <Button
+              onClick={() => setDifficulty("hard")}
+              variant={difficulty === "hard" ? "default" : "outline"}
+              className={difficulty === "hard" ? "bg-indigo-600 hover:bg-indigo-700" : ""}
+            >
+              Hard
+            </Button>
+            <Button onClick={initializeBoard} className="ml-auto bg-indigo-600 hover:bg-indigo-700">
               Reset
             </Button>
           </div>
-        </div>
 
-        {/* Difficulty selector */}
-        <div className="flex gap-2 mb-4">
-          <Button
-            variant={difficulty === "easy" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setDifficulty("easy")}
-            className={difficulty === "easy" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
-          >
-            Easy
-          </Button>
-          <Button
-            variant={difficulty === "medium" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setDifficulty("medium")}
-            className={difficulty === "medium" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
-          >
-            Medium
-          </Button>
-          <Button
-            variant={difficulty === "hard" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setDifficulty("hard")}
-            className={difficulty === "hard" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
-          >
-            Hard
-          </Button>
-        </div>
+          <div className="flex justify-center mb-4">
+            <div className={`inline-block border ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}`}
+                 style={{
+                   display: 'grid',
+                   gridTemplateColumns: `repeat(${config[difficulty].cols}, ${difficulty === 'hard' ? 'minmax(0, 1fr)' : '32px'})`,
+                   width: difficulty === 'hard' ? '100%' : 'auto',
+                   maxWidth: '100%'
+                 }}>
+              {board.map((row, rowIndex) =>
+                row.map((cell, colIndex) => (
+                  <button
+                    key={`${rowIndex}-${colIndex}`}
+                    onClick={() => revealCell(rowIndex, colIndex)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      toggleFlag(rowIndex, colIndex)
+                    }}
+                    className={`
+                      ${difficulty === 'hard' ? 'aspect-square' : 'w-8 h-8'} 
+                      flex items-center justify-center text-sm
+                      border-r border-b ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}
+                      ${cell.isRevealed
+                        ? cell.hasMine
+                          ? 'bg-rose-500 text-white'
+                          : isDarkMode 
+                            ? 'bg-slate-700 hover:bg-slate-600' 
+                            : 'bg-indigo-50 hover:bg-indigo-100'
+                        : isDarkMode 
+                            ? 'bg-slate-800 hover:bg-slate-700' 
+                            : 'bg-emerald-100 hover:bg-emerald-200 shadow-inner'}
+                      ${gameState === "lost" && cell.hasMine ? 'bg-rose-500 text-white' : ''}
+                      ${cell.neighborMines === 1 ? 'text-blue-600 dark:text-blue-400' : ''}
+                      ${cell.neighborMines === 2 ? 'text-emerald-600 dark:text-emerald-400' : ''}
+                      ${cell.neighborMines === 3 ? 'text-rose-600 dark:text-rose-400' : ''}
+                      ${cell.neighborMines === 4 ? 'text-indigo-600 dark:text-indigo-400' : ''}
+                      ${cell.neighborMines === 5 ? 'text-amber-600 dark:text-amber-400' : ''}
+                      ${cell.neighborMines === 6 ? 'text-teal-600 dark:text-teal-400' : ''}
+                      ${cell.neighborMines === 7 ? 'text-purple-600 dark:text-purple-400' : ''}
+                      ${cell.neighborMines === 8 ? 'text-gray-600 dark:text-gray-400' : ''}
+                      transition-all duration-200 ease-in-out
+                      ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}
+                      font-semibold
+                    `}
+                    disabled={gameState !== "playing"}
+                  >
+                    {cell.isRevealed
+                      ? cell.hasMine
+                        ? '💣'
+                        : cell.neighborMines > 0
+                          ? cell.neighborMines
+                          : ''
+                      : cell.isFlagged
+                        ? '🚩'
+                        : ''}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
 
-        {/* Game board */}
-        <div 
-          className={`relative w-full max-w-sm aspect-square bg-teal-200 border-2 border-teal-700 rounded-md shadow-md p-0.5 grid gap-0.5`}
-          style={{ 
-            gridTemplateColumns: `repeat(${cols}, 1fr)`,
-            gridTemplateRows: `repeat(${rows}, 1fr)`
-          }}
-        >
-          {board.map((row, rowIndex) =>
-            row.map((cell, colIndex) => (
-              <Cell key={`${rowIndex}-${colIndex}`} cell={cell} row={rowIndex} col={colIndex} />
-            )),
+          {gameState !== "playing" && (
+            <div className={`text-center text-lg font-bold ${gameState === "won" ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {gameState === "won" ? "Congratulations! You won!" : "Game Over!"}
+            </div>
           )}
-        </div>
 
-        {/* Instructions */}
-        <div className="mt-4 text-sm text-teal-700 max-w-sm bg-white p-3 rounded-md shadow-sm">
-          <p className="mb-2">
-            <strong>How to play:</strong>
-          </p>
-          <ul className="list-disc pl-5">
-            <li>Tap to reveal a cell</li>
-            <li>Long press or right-click to place a flag</li>
-            <li>Numbers show how many mines are adjacent</li>
-            <li>Avoid all mines to win!</li>
-          </ul>
+          <div className="mt-4">
+            <h2 className={`text-lg font-semibold mb-2 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+              How to play:
+            </h2>
+            <ul className={`list-disc list-inside ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+              <li>Click to reveal a cell</li>
+              <li>Right-click or long press to place a flag</li>
+              <li>Numbers show how many mines are adjacent</li>
+              <li>Avoid all mines to win!</li>
+            </ul>
+          </div>
         </div>
       </div>
     </div>
