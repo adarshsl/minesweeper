@@ -4,6 +4,8 @@ import type React from "react"
 
 import { useEffect, useState } from "react"
 import { Flag, RefreshCw, Timer } from "lucide-react"
+import { useRouter } from "next/navigation"
+import Cookies from 'js-cookie'
 
 import { Button } from "@/components/ui/button"
 
@@ -15,11 +17,13 @@ interface CellType {
 }
 
 export default function Minesweeper() {
+  const router = useRouter()
   const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">("easy")
   const [gameState, setGameState] = useState<"playing" | "won" | "lost">("playing")
   const [firstClick, setFirstClick] = useState(true)
   const [time, setTime] = useState(0)
   const [timerInterval, setTimerInterval] = useState<NodeJS.Timeout | null>(null)
+  const [isDarkMode, setIsDarkMode] = useState(false)
 
   // Game configuration based on difficulty
   const config = {
@@ -373,95 +377,116 @@ export default function Minesweeper() {
     )
   }
 
+  const handleLogout = () => {
+    Cookies.remove('user')
+    router.push('/login')
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gradient-to-b from-sky-50 to-sky-100">
-      <h1 className="text-2xl font-bold mb-4 text-teal-700">Minesweeper</h1>
+    <div className={`min-h-screen flex flex-col items-center justify-center p-4 ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-b from-sky-50 to-sky-100'}`}>
+      <div className="w-full max-w-2xl">
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex items-center space-x-4">
+            <div className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+              Mines: {minesLeft}
+            </div>
+            <div className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+              Time: {formatTime(time)}
+            </div>
+          </div>
+          <div className="flex items-center space-x-4">
+            <Button
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Logout
+            </Button>
+            <Button
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className={`${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'} text-white`}
+            >
+              {isDarkMode ? '☀️' : '🌙'}
+            </Button>
+          </div>
+        </div>
+        <h1 className="text-2xl font-bold mb-4 text-teal-700">Minesweeper</h1>
 
-      {/* Game status */}
-      <div className="mb-4 text-center">
-        {gameState === "won" && <div className="text-xl font-bold text-green-600">You Win! 🎉</div>}
-        {gameState === "lost" && <div className="text-xl font-bold text-red-600">Game Over! 💥</div>}
-      </div>
-
-      {/* Game controls */}
-      <div className="flex justify-between items-center w-full max-w-sm mb-4">
-        <div className="flex items-center gap-1 bg-teal-600 text-white px-3 py-1 rounded-md shadow-sm">
-          <Flag size={16} />
-          <span>{minesLeft}</span>
+        {/* Game status */}
+        <div className="mb-4 text-center">
+          {gameState === "won" && <div className="text-xl font-bold text-green-600">You Win! 🎉</div>}
+          {gameState === "lost" && <div className="text-xl font-bold text-red-600">Game Over! 💥</div>}
         </div>
 
-        <div className="flex gap-2">
+        {/* Game controls */}
+        <div className="flex justify-between items-center w-full max-w-sm mb-4">
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={initializeGame}
+              className="flex items-center gap-1 bg-white shadow-sm"
+            >
+              <RefreshCw size={16} />
+              Reset
+            </Button>
+          </div>
+        </div>
+
+        {/* Difficulty selector */}
+        <div className="flex gap-2 mb-4">
           <Button
-            variant="outline"
+            variant={difficulty === "easy" ? "default" : "outline"}
             size="sm"
-            onClick={initializeGame}
-            className="flex items-center gap-1 bg-white shadow-sm"
+            onClick={() => setDifficulty("easy")}
+            className={difficulty === "easy" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
           >
-            <RefreshCw size={16} />
-            Reset
+            Easy
+          </Button>
+          <Button
+            variant={difficulty === "medium" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setDifficulty("medium")}
+            className={difficulty === "medium" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
+          >
+            Medium
+          </Button>
+          <Button
+            variant={difficulty === "hard" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setDifficulty("hard")}
+            className={difficulty === "hard" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
+          >
+            Hard
           </Button>
         </div>
 
-        <div className="flex items-center gap-1 bg-teal-600 text-white px-3 py-1 rounded-md shadow-sm">
-          <Timer size={16} />
-          <span>{formatTime(time)}</span>
+        {/* Game board */}
+        <div 
+          className={`relative w-full max-w-sm aspect-square bg-teal-200 border-2 border-teal-700 rounded-md shadow-md p-0.5 grid gap-0.5`}
+          style={{ 
+            gridTemplateColumns: `repeat(${cols}, 1fr)`,
+            gridTemplateRows: `repeat(${rows}, 1fr)`
+          }}
+        >
+          {board.map((row, rowIndex) =>
+            row.map((cell, colIndex) => (
+              <Cell key={`${rowIndex}-${colIndex}`} cell={cell} row={rowIndex} col={colIndex} />
+            )),
+          )}
         </div>
-      </div>
 
-      {/* Difficulty selector */}
-      <div className="flex gap-2 mb-4">
-        <Button
-          variant={difficulty === "easy" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setDifficulty("easy")}
-          className={difficulty === "easy" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
-        >
-          Easy
-        </Button>
-        <Button
-          variant={difficulty === "medium" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setDifficulty("medium")}
-          className={difficulty === "medium" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
-        >
-          Medium
-        </Button>
-        <Button
-          variant={difficulty === "hard" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setDifficulty("hard")}
-          className={difficulty === "hard" ? "bg-teal-600 hover:bg-teal-700" : "bg-white shadow-sm"}
-        >
-          Hard
-        </Button>
-      </div>
-
-      {/* Game board */}
-      <div 
-        className={`relative w-full max-w-sm aspect-square bg-teal-200 border-2 border-teal-700 rounded-md shadow-md p-0.5 grid gap-0.5`}
-        style={{ 
-          gridTemplateColumns: `repeat(${cols}, 1fr)`,
-          gridTemplateRows: `repeat(${rows}, 1fr)`
-        }}
-      >
-        {board.map((row, rowIndex) =>
-          row.map((cell, colIndex) => (
-            <Cell key={`${rowIndex}-${colIndex}`} cell={cell} row={rowIndex} col={colIndex} />
-          )),
-        )}
-      </div>
-
-      {/* Instructions */}
-      <div className="mt-4 text-sm text-teal-700 max-w-sm bg-white p-3 rounded-md shadow-sm">
-        <p className="mb-2">
-          <strong>How to play:</strong>
-        </p>
-        <ul className="list-disc pl-5">
-          <li>Tap to reveal a cell</li>
-          <li>Long press or right-click to place a flag</li>
-          <li>Numbers show how many mines are adjacent</li>
-          <li>Avoid all mines to win!</li>
-        </ul>
+        {/* Instructions */}
+        <div className="mt-4 text-sm text-teal-700 max-w-sm bg-white p-3 rounded-md shadow-sm">
+          <p className="mb-2">
+            <strong>How to play:</strong>
+          </p>
+          <ul className="list-disc pl-5">
+            <li>Tap to reveal a cell</li>
+            <li>Long press or right-click to place a flag</li>
+            <li>Numbers show how many mines are adjacent</li>
+            <li>Avoid all mines to win!</li>
+          </ul>
+        </div>
       </div>
     </div>
   )
